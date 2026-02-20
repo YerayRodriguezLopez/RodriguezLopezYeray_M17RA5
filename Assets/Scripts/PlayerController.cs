@@ -52,6 +52,7 @@ public class PlayerController : MonoBehaviour
     private int dieHash;
     private int shootHash;
 
+    private Vector2 rawLookInput;
     private void Awake()
     {
         controller = GetComponent<CharacterController>();
@@ -126,24 +127,20 @@ public class PlayerController : MonoBehaviour
     {
         if (isAiming)
         {
-            // En modo apuntar, rotar con la cámara
-            float horizontalRotation = lookInput.x * mouseSensitivity;
+            // En modo apuntar (cámara de hombro):
+            // El jugador rota en el eje Y con la cámara
+            float horizontalRotation = rawLookInput.x * mouseSensitivity;
             transform.Rotate(Vector3.up * horizontalRotation);
+
+            // Actualizar la cámara POV
+            CameraManager.Instance?.UpdateShoulderCamera(rawLookInput);
         }
         else
         {
-            // Rotación normal de tercera persona
+            // En tercera persona normal:
+            // Rotar el jugador con input horizontal
             float horizontalRotation = lookInput.x * mouseSensitivity;
             transform.Rotate(Vector3.up * horizontalRotation);
-        }
-
-        // Camera vertical rotation
-        verticalRotation -= lookInput.y * mouseSensitivity;
-        verticalRotation = Mathf.Clamp(verticalRotation, -maxLookAngle, maxLookAngle);
-
-        if (cameraFollowTarget != null)
-        {
-            cameraFollowTarget.localRotation = Quaternion.Euler(verticalRotation, 0, 0);
         }
     }
 
@@ -162,7 +159,10 @@ public class PlayerController : MonoBehaviour
 
     public void OnLook(InputAction.CallbackContext context)
     {
-        lookInput = context.ReadValue<Vector2>();
+        rawLookInput = context.ReadValue<Vector2>();
+
+        // Aplicar sensibilidad solo para rotación del jugador
+        lookInput = rawLookInput * mouseSensitivity * 0.1f;
     }
 
     public void OnJump(InputAction.CallbackContext context)
@@ -210,7 +210,7 @@ public class PlayerController : MonoBehaviour
         if (context.performed)
         {
             isAiming = true;
-            CameraManager.Instance?.SwitchToFirstPerson();
+            CameraManager.Instance?.SwitchToShoulder(); // CAMBIADO
         }
         else if (context.canceled)
         {
@@ -262,12 +262,41 @@ public class PlayerController : MonoBehaviour
         {
             GameObject arrow = Instantiate(arrowPrefab, arrowSpawnPoint.position, arrowSpawnPoint.rotation);
 
+            // Calcular dirección de disparo basada en la cámara
+            Vector3 shootDirection;
+
+            if (CameraManager.Instance != null && Camera.main != null)
+            {
+                // Raycast desde el centro de la pantalla
+                Ray ray = Camera.main.ViewportPointToRay(new Vector3(0.5f, 0.5f, 0));
+                RaycastHit hit;
+
+                if (Physics.Raycast(ray, out hit, 100f))
+                {
+                    // Apuntar al punto de impacto
+                    shootDirection = (hit.point - arrowSpawnPoint.position).normalized;
+                }
+                else
+                {
+                    // Apuntar hacia adelante de la cámara
+                    shootDirection = ray.direction;
+                }
+            }
+            else
+            {
+                // Fallback: dirección forward del spawn point
+                shootDirection = arrowSpawnPoint.forward;
+            }
+
             Arrow arrowScript = arrow.GetComponent<Arrow>();
             if (arrowScript != null)
             {
-                arrowScript.Shoot(arrowSpawnPoint.forward);
+                arrowScript.Shoot(shootDirection);
             }
         }
+
+        // Efecto de sonido
+        AudioManager.Instance?.PlaySFX("BowShoot");
     }
 
     private void StartDance()
