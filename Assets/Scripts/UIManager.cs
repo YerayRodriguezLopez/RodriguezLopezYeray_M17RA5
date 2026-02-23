@@ -1,298 +1,230 @@
+using System.Collections;
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
 using TMPro;
-using UnityEngine.SceneManagement;
-using System.Collections;
 
 public class UIManager : MonoBehaviour
 {
     public static UIManager Instance { get; private set; }
 
-    [Header("Main Menu")]
+    // ─── Panels ─────────────────────────────────────────────────────────────
+    [Header("Panels")]
     [SerializeField] private GameObject mainMenuPanel;
-    [SerializeField] private Button playButton;
-    [SerializeField] private Button quitButton;
-
-    [Header("Pause Menu")]
     [SerializeField] private GameObject pauseMenuPanel;
-    [SerializeField] private Button resumeButton;
-    [SerializeField] private Button restartButton;
-    [SerializeField] private Button mainMenuButton;
-
-    [Header("Game Over Menu")]
     [SerializeField] private GameObject gameOverPanel;
-    [SerializeField] private Button retryButton;
-    [SerializeField] private Button exitButton;
-
-    [Header("HUD")]
+    [SerializeField] private GameObject winPanel;
     [SerializeField] private GameObject hudPanel;
-    [SerializeField] private Transform inventoryContainer;
+
+    // ─── HUD ────────────────────────────────────────────────────────────────
+    [Header("HUD")]
+    [SerializeField] private Transform  inventoryContainer;
     [SerializeField] private GameObject inventorySlotPrefab;
-    [SerializeField] private TextMeshProUGUI messageText;
+    [SerializeField] private TMP_Text   messageText;
+    [SerializeField] private float      messageDuration = 3f;
 
+    // ─── Minimap ────────────────────────────────────────────────────────────
     [Header("Minimap")]
-    [SerializeField] private RawImage minimapImage;
-    [SerializeField] private Camera minimapCamera;
-    [SerializeField] private Transform playerTransform;
+    [SerializeField] private RawImage   minimapImage;
+    [SerializeField] private Camera     minimapCamera;
+    [SerializeField] private RectTransform playerMarker;
 
-    private bool isPaused = false;
+    // ─── Cached slots ────────────────────────────────────────────────────────
+    private List<GameObject> inventorySlots = new List<GameObject>();
+    private Coroutine        messageCoroutine;
 
+    // ════════════════════════════════════════════════════════════════════════
     private void Awake()
     {
-        if (Instance == null)
-        {
-            Instance = this;
-        }
-        else
-        {
-            Destroy(gameObject);
-        }
+        if (Instance == null) Instance = this;
+        else { Destroy(gameObject); return; }
     }
 
     private void Start()
     {
-        SetupButtons();
+        // Default state: show only HUD (assuming we start in-game)
+        // MainMenu scene will call ShowMainMenu() explicitly.
+        ShowMainMenu(false);
+        ShowPauseMenu(false);
+        ShowGameOver(false);
+        ShowWinScreen(false);
 
-        // Mostrar men� principal al inicio
-        if (SceneManager.GetActiveScene().name == "MainMenu")
-        {
-            ShowMainMenu();
-        }
-        else
-        {
-            ShowHUD();
-        }
+        if (hudPanel != null) hudPanel.SetActive(true);
 
-        // Suscribirse al evento de inventario
+        // Subscribe to inventory changes
         if (InventoryManager.Instance != null)
-        {
-            InventoryManager.Instance.onInventoryChanged += UpdateInventoryUI;
-        }
+            InventoryManager.Instance.OnInventoryChanged += RefreshInventoryHUD;
     }
-
-    private void Update()
-    {
-        // Detectar pausa (ESC)
-        if (Input.GetKeyDown(KeyCode.Escape))
-        {
-            if (isPaused)
-                ResumeGame();
-            else
-                PauseGame();
-        }
-
-        // Actualizar minimap
-        UpdateMinimap();
-    }
-
-    private void SetupButtons()
-    {
-        // Main Menu
-        if (playButton != null)
-            playButton.onClick.AddListener(StartGame);
-        if (quitButton != null)
-            quitButton.onClick.AddListener(QuitGame);
-
-        // Pause Menu
-        if (resumeButton != null)
-            resumeButton.onClick.AddListener(ResumeGame);
-        if (restartButton != null)
-            restartButton.onClick.AddListener(RestartGame);
-        if (mainMenuButton != null)
-            mainMenuButton.onClick.AddListener(BackToMainMenu);
-
-        // Game Over
-        if (retryButton != null)
-            retryButton.onClick.AddListener(RestartGame);
-        if (exitButton != null)
-            exitButton.onClick.AddListener(BackToMainMenu);
-    }
-
-    #region Menu Management
-
-    private void ShowMainMenu()
-    {
-        HideAllPanels();
-        if (mainMenuPanel != null)
-            mainMenuPanel.SetActive(true);
-
-        Time.timeScale = 1f;
-        Cursor.lockState = CursorLockMode.None;
-        Cursor.visible = true;
-    }
-
-    public void ShowHUD()
-    {
-        HideAllPanels();
-        if (hudPanel != null)
-            hudPanel.SetActive(true);
-
-        Time.timeScale = 1f;
-        Cursor.lockState = CursorLockMode.Locked;
-        Cursor.visible = false;
-    }
-
-    public void PauseGame()
-    {
-        isPaused = true;
-
-        if (pauseMenuPanel != null)
-            pauseMenuPanel.SetActive(true);
-        if (hudPanel != null)
-            hudPanel.SetActive(false);
-
-        Time.timeScale = 0f;
-        Cursor.lockState = CursorLockMode.None;
-        Cursor.visible = true;
-
-        AudioManager.Instance?.SetMusicVolume(0.3f);
-    }
-
-    public void ResumeGame()
-    {
-        isPaused = false;
-
-        if (pauseMenuPanel != null)
-            pauseMenuPanel.SetActive(false);
-        if (hudPanel != null)
-            hudPanel.SetActive(true);
-
-        Time.timeScale = 1f;
-        Cursor.lockState = CursorLockMode.Locked;
-        Cursor.visible = false;
-
-        AudioManager.Instance?.SetMusicVolume(1f);
-    }
-
-    public void ShowGameOver()
-    {
-        HideAllPanels();
-
-        if (gameOverPanel != null)
-            gameOverPanel.SetActive(true);
-
-        Time.timeScale = 0f;
-        Cursor.lockState = CursorLockMode.None;
-        Cursor.visible = true;
-
-        AudioManager.Instance?.StopMusic();
-        AudioManager.Instance?.PlaySFX("GameOver");
-    }
-
-    private void HideAllPanels()
-    {
-        if (mainMenuPanel != null)
-            mainMenuPanel.SetActive(false);
-        if (pauseMenuPanel != null)
-            pauseMenuPanel.SetActive(false);
-        if (gameOverPanel != null)
-            gameOverPanel.SetActive(false);
-        if (hudPanel != null)
-            hudPanel.SetActive(false);
-    }
-
-    #endregion
-
-    #region Button Actions
-
-    public void StartGame()
-    {
-        AudioManager.Instance?.PlaySFX("ButtonClick");
-        SceneManager.LoadScene("GameScene");
-    }
-
-    public void RestartGame()
-    {
-        AudioManager.Instance?.PlaySFX("ButtonClick");
-        Time.timeScale = 1f;
-        SceneManager.LoadScene(SceneManager.GetActiveScene().name);
-    }
-
-    public void BackToMainMenu()
-    {
-        AudioManager.Instance?.PlaySFX("ButtonClick");
-        Time.timeScale = 1f;
-        SceneManager.LoadScene("MainMenu");
-    }
-
-    public void QuitGame()
-    {
-        AudioManager.Instance?.PlaySFX("ButtonClick");
-        Debug.Log("Saliendo del juego...");
-        Application.Quit();
-
-#if UNITY_EDITOR
-        UnityEditor.EditorApplication.isPlaying = false;
-#endif
-    }
-
-    #endregion
-
-    #region HUD
-
-    private void UpdateInventoryUI()
-    {
-        // Limpiar slots existentes
-        foreach (Transform child in inventoryContainer)
-        {
-            Destroy(child.gameObject);
-        }
-
-        // Crear nuevos slots
-        var inventory = InventoryManager.Instance.GetInventory();
-        foreach (ItemData item in inventory)
-        {
-            GameObject slot = Instantiate(inventorySlotPrefab, inventoryContainer);
-
-            Image icon = slot.transform.Find("Icon")?.GetComponent<Image>();
-            if (icon != null && item.icon != null)
-            {
-                icon.sprite = item.icon;
-                icon.enabled = true;
-            }
-        }
-    }
-
-    public void ShowMessage(string message, float duration = 3f)
-    {
-        if (messageText != null)
-        {
-            StopAllCoroutines();
-            StartCoroutine(ShowMessageCoroutine(message, duration));
-        }
-    }
-
-    private IEnumerator ShowMessageCoroutine(string message, float duration)
-    {
-        messageText.text = message;
-        messageText.enabled = true;
-
-        yield return new WaitForSeconds(duration);
-
-        messageText.enabled = false;
-    }
-
-    private void UpdateMinimap()
-    {
-        if (minimapCamera != null && playerTransform != null)
-        {
-            // Mantener el minimap sobre el jugador
-            Vector3 newPosition = playerTransform.position;
-            newPosition.y = minimapCamera.transform.position.y;
-            minimapCamera.transform.position = newPosition;
-
-            // Rotar con el jugador (opcional)
-            // minimapCamera.transform.rotation = Quaternion.Euler(90f, playerTransform.eulerAngles.y, 0f);
-        }
-    }
-
-    #endregion
 
     private void OnDestroy()
     {
         if (InventoryManager.Instance != null)
+            InventoryManager.Instance.OnInventoryChanged -= RefreshInventoryHUD;
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    #region Panel visibility
+    // ════════════════════════════════════════════════════════════════════════
+
+    public void ShowMainMenu(bool visible = true)
+    {
+        if (mainMenuPanel != null) mainMenuPanel.SetActive(visible);
+        if (hudPanel       != null) hudPanel.SetActive(!visible);
+
+        Cursor.lockState = visible ? CursorLockMode.None : CursorLockMode.Locked;
+        Cursor.visible   = visible;
+    }
+
+    public void ShowPauseMenu(bool visible)
+    {
+        if (pauseMenuPanel != null) pauseMenuPanel.SetActive(visible);
+    }
+
+    public void ShowGameOver(bool visible = true)
+    {
+        if (gameOverPanel != null) gameOverPanel.SetActive(visible);
+        if (visible)
         {
-            InventoryManager.Instance.onInventoryChanged -= UpdateInventoryUI;
+            Cursor.lockState = CursorLockMode.None;
+            Cursor.visible   = true;
+            Time.timeScale   = 0f;
         }
     }
+
+    public void ShowWinScreen(bool visible = true)
+    {
+        if (winPanel != null) winPanel.SetActive(visible);
+        if (visible)
+        {
+            Cursor.lockState = CursorLockMode.None;
+            Cursor.visible   = true;
+        }
+    }
+
+    // ─── Shorthand called from PlayerController ──────────────────────────────
+    public void ShowGameOver() => ShowGameOver(true);
+
+    #endregion
+
+    // ════════════════════════════════════════════════════════════════════════
+    #region Button callbacks (assign in Inspector)
+    // ════════════════════════════════════════════════════════════════════════
+
+    // Main menu buttons
+    public void OnPlayButton()    => GameManager.Instance?.StartGame();
+    public void OnQuitButton()    => GameManager.Instance?.QuitGame();
+
+    // Pause menu buttons
+    public void OnResumeButton()
+    {
+        PlayerController player = FindObjectOfType<PlayerController>();
+        player?.TogglePause();
+    }
+
+    public void OnRestartButton()
+    {
+        Time.timeScale = 1f;
+        GameManager.Instance?.RestartGame();
+    }
+
+    public void OnMainMenuButton()
+    {
+        Time.timeScale = 1f;
+        GameManager.Instance?.LoadMainMenu();
+    }
+
+    // Game over / win buttons
+    public void OnPlayAgainButton() => OnRestartButton();
+
+    #endregion
+
+    // ════════════════════════════════════════════════════════════════════════
+    #region HUD – Inventory
+    // ════════════════════════════════════════════════════════════════════════
+
+    private void RefreshInventoryHUD()
+    {
+        if (inventoryContainer == null || inventorySlotPrefab == null) return;
+
+        // Clear old slots
+        foreach (GameObject slot in inventorySlots)
+            Destroy(slot);
+        inventorySlots.Clear();
+
+        // Rebuild
+        List<ItemData> items = InventoryManager.Instance?.GetAllItems();
+        if (items == null) return;
+
+        foreach (ItemData item in items)
+        {
+            GameObject slot = Instantiate(inventorySlotPrefab, inventoryContainer);
+            inventorySlots.Add(slot);
+
+            // Set icon if the prefab has an Image component
+            Image iconImage = slot.GetComponentInChildren<Image>();
+            if (iconImage != null && item.icon != null)
+                iconImage.sprite = item.icon;
+
+            // Set name label if present
+            TMP_Text label = slot.GetComponentInChildren<TMP_Text>();
+            if (label != null)
+                label.text = item.itemName;
+        }
+    }
+
+    #endregion
+
+    // ════════════════════════════════════════════════════════════════════════
+    #region HUD – Messages
+    // ════════════════════════════════════════════════════════════════════════
+
+    public void ShowMessage(string msg)
+    {
+        if (messageText == null) return;
+
+        if (messageCoroutine != null)
+            StopCoroutine(messageCoroutine);
+
+        messageCoroutine = StartCoroutine(ShowMessageCoroutine(msg));
+    }
+
+    private IEnumerator ShowMessageCoroutine(string msg)
+    {
+        messageText.text    = msg;
+        messageText.enabled = true;
+        yield return new WaitForSeconds(messageDuration);
+        messageText.enabled = false;
+        messageText.text    = string.Empty;
+    }
+
+    #endregion
+
+    // ════════════════════════════════════════════════════════════════════════
+    #region Minimap
+    // ════════════════════════════════════════════════════════════════════════
+
+    private void LateUpdate()
+    {
+        UpdateMinimap();
+    }
+
+    private void UpdateMinimap()
+    {
+        if (minimapCamera == null || playerMarker == null) return;
+
+        PlayerController player = FindObjectOfType<PlayerController>();
+        if (player == null) return;
+
+        // Keep minimap camera above player
+        Vector3 camPos = minimapCamera.transform.position;
+        camPos.x = player.transform.position.x;
+        camPos.z = player.transform.position.z;
+        minimapCamera.transform.position = camPos;
+
+        // Rotate player marker to match player yaw
+        playerMarker.rotation = Quaternion.Euler(
+            0, 0, -player.transform.eulerAngles.y);
+    }
+
+    #endregion
 }

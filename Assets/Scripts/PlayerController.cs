@@ -2,339 +2,438 @@ using UnityEngine;
 using UnityEngine.InputSystem;
 
 [RequireComponent(typeof(CharacterController))]
-[RequireComponent(typeof(PlayerInput))]
-public class PlayerController : MonoBehaviour
+public class PlayerController : MonoBehaviour, PlayerInputActions.IPlayerActions
 {
+    // ─── Stats ──────────────────────────────────────────────────────────────
     [Header("Movement")]
-    [SerializeField] private float walkSpeed = 3f;
-    [SerializeField] private float runSpeed = 6f;
-    [SerializeField] private float crouchSpeed = 1.5f;
-    [SerializeField] private float jumpHeight = 2f;
-    [SerializeField] private float gravity = -9.81f;
+    [SerializeField] private float walkSpeed    = 3f;
+    [SerializeField] private float runSpeed     = 6f;
+    [SerializeField] private float crouchSpeed  = 1.5f;
+    [SerializeField] private float jumpForce    = 5f;
+    [SerializeField] private float gravity      = -20f;
 
-    [Header("Camera")]
-    [SerializeField] private Transform cameraFollowTarget;
-    [SerializeField] private float mouseSensitivity = 2f;
-    [SerializeField] private float maxLookAngle = 80f;
-
-    [Header("References")]
-    [SerializeField] private Transform weaponSocket;
-    [SerializeField] private GameObject arrowPrefab;
+    [Header("Shoot")]
     [SerializeField] private Transform arrowSpawnPoint;
+    [SerializeField] private GameObject arrowPrefab;
 
-    // Components
-    private CharacterController controller;
-    private PlayerInput playerInput;
-    private Animator animator;
+    [Header("Combat")]
+    [SerializeField] private float attackDamage = 30f;
+    [SerializeField] private float attackRange  = 2f;
 
-    // Input values
+    [Header("Audio")]
+    [SerializeField] private AudioClip jumpSound;
+    [SerializeField] private AudioClip landSound;
+    [SerializeField] private AudioClip deathSound;
+    [SerializeField] private AudioClip footstepSound;
+
+    // ─── Components ─────────────────────────────────────────────────────────
+    private CharacterController cc;
+    private Animator            anim;
+    private PlayerInputActions  inputActions;
+
+    // ─── State ──────────────────────────────────────────────────────────────
     private Vector2 moveInput;
     private Vector2 lookInput;
-    private bool isRunning;
-    private bool isCrouching;
-    private bool isAiming;
 
-    // State
-    private Vector3 velocity;
-    private float verticalRotation;
-    private bool isGrounded;
-    private bool isDancing;
-    private bool isDead;
+    private Vector3 velocity;           // vertical velocity (gravity + jump)
+    private bool    isGrounded;
+    private bool    wasGrounded;
 
-    // Animation hashes
-    private int moveXHash;
-    private int moveZHash;
-    private int isRunningHash;
-    private int isCrouchingHash;
-    private int isAimingHash;
-    private int jumpHash;
-    private int isDancingHash;
-    private int dieHash;
-    private int shootHash;
+    private bool    isCrouching;
+    private bool    isRunning;
+    private bool    isAiming;
+    private bool    isDancing;
+    private bool    isDead;
+    private bool    isPaused;
 
-    private Vector2 rawLookInput;
+    // Jump phases
+    private enum JumpPhase { None, Preparing, Rising, Falling, Landing }
+    private JumpPhase jumpPhase = JumpPhase.None;
+    private float     jumpApexY;
+
+    // Footstep timer
+    private float footstepTimer;
+    private const float FootstepInterval = 0.4f;
+
+    // ─── Animator hashes ────────────────────────────────────────────────────
+    private static readonly int HashSpeed      = Animator.StringToHash("Speed");
+    private static readonly int HashCrouch     = Animator.StringToHash("IsCrouching");
+    private static readonly int HashAim        = Animator.StringToHash("IsAiming");
+    private static readonly int HashJumpPrep   = Animator.StringToHash("JumpPrepare");
+    private static readonly int HashJumpRise   = Animator.StringToHash("JumpRise");
+    private static readonly int HashJumpFall   = Animator.StringToHash("JumpFall");
+    private static readonly int HashLand       = Animator.StringToHash("Land");
+    private static readonly int HashDance      = Animator.StringToHash("IsDancing");
+    private static readonly int HashDeath      = Animator.StringToHash("Die");
+    private static readonly int HashAttack     = Animator.StringToHash("Attack");
+    private static readonly int HashShoot      = Animator.StringToHash("Shoot");
+
+    // ═══════════════════════════════════════════════════════════════════════
+    #region Unity lifecycle
+    // ═══════════════════════════════════════════════════════════════════════
+
     private void Awake()
     {
-        controller = GetComponent<CharacterController>();
-        playerInput = GetComponent<PlayerInput>();
-        animator = GetComponent<Animator>();
+        cc   = GetComponent<CharacterController>();
+        anim = GetComponentInChildren<Animator>();
 
-        // Cache animator hashes
-        moveXHash = Animator.StringToHash("MoveX");
-        moveZHash = Animator.StringToHash("MoveZ");
-        isRunningHash = Animator.StringToHash("IsRunning");
-        isCrouchingHash = Animator.StringToHash("IsCrouching");
-        isAimingHash = Animator.StringToHash("IsAiming");
-        jumpHash = Animator.StringToHash("Jump");
-        isDancingHash = Animator.StringToHash("IsDancing");
-        dieHash = Animator.StringToHash("Die");
-        shootHash = Animator.StringToHash("Shoot");
+        inputActions = new PlayerInputActions();
+        inputActions.Player.AddCallbacks(this);
+    }
 
-        Cursor.lockState = CursorLockMode.Locked;
+    private void OnEnable()
+    {
+        inputActions.Player.Enable();
+        inputActions.UI.Disable();
+    }
+
+    private void OnDisable()
+    {
+        inputActions.Player.Disable();
+        inputActions.UI.Disable();
+    }
+
+    private void OnDestroy()
+    {
+        inputActions.Dispose();
     }
 
     private void Update()
     {
-        if (isDead || isDancing) return;
+        if (isDead) return;
 
-        CheckGrounded();
+        CheckGround();
+        HandleGravityAndJumpPhases();
         HandleMovement();
-        HandleRotation();
-        ApplyGravity();
+        HandleCamera();
+        HandleFootsteps();
     }
 
-    private void CheckGrounded()
+    #endregion
+
+    // ═══════════════════════════════════════════════════════════════════════
+    #region Input callbacks  (PlayerInputActions.IPlayerActions)
+    // ═══════════════════════════════════════════════════════════════════════
+
+    public void OnMovement(InputAction.CallbackContext ctx)
     {
-        isGrounded = controller.isGrounded;
+        if (isDead || isDancing) { moveInput = Vector2.zero; return; }
+        moveInput = ctx.ReadValue<Vector2>();
+    }
+
+    public void OnLook(InputAction.CallbackContext ctx)
+    {
+        lookInput = ctx.ReadValue<Vector2>();
+    }
+
+    public void OnJump(InputAction.CallbackContext ctx)
+    {
+        if (!ctx.performed) return;
+        if (isDead || isDancing || isCrouching) return;
+        if (!isGrounded || jumpPhase != JumpPhase.None) return;
+
+        StartJump();
+    }
+
+    public void OnCrouch(InputAction.CallbackContext ctx)
+    {
+        if (!ctx.performed) return;
+        if (isDead || isDancing) return;
+
+        isCrouching = !isCrouching;
+        anim?.SetBool(HashCrouch, isCrouching);
+
+        // Adjust capsule height
+        cc.height  = isCrouching ? 1f : 2f;
+        cc.center  = isCrouching ? new Vector3(0, 0.5f, 0) : new Vector3(0, 1f, 0);
+    }
+
+    public void OnRun(InputAction.CallbackContext ctx)
+    {
+        if (isDead || isDancing) return;
+        isRunning = ctx.ReadValueAsButton();
+    }
+
+    public void OnAim(InputAction.CallbackContext ctx)
+    {
+        if (isDead || isDancing) return;
+
+        isAiming = ctx.ReadValueAsButton();
+        anim?.SetBool(HashAim, isAiming);
+
+        CameraManager.Instance?.SetAiming(isAiming);
+        Cursor.lockState = isAiming ? CursorLockMode.Locked : CursorLockMode.Locked;
+    }
+
+    public void OnShoot(InputAction.CallbackContext ctx)
+    {
+        if (!ctx.performed) return;
+        if (isDead || isDancing || !isAiming) return;
+
+        ShootArrow();
+        anim?.SetTrigger(HashShoot);
+    }
+
+    public void OnDance(InputAction.CallbackContext ctx)
+    {
+        if (!ctx.performed) return;
+        if (isDead) return;
+
+        isDancing  = !isDancing;
+        moveInput  = Vector2.zero;
+        anim?.SetBool(HashDance, isDancing);
+
+        CameraManager.Instance?.SetDancing(isDancing);
+    }
+
+    public void OnInteract(InputAction.CallbackContext ctx)
+    {
+        if (!ctx.performed) return;
+        if (isDead || isDancing) return;
+
+        // Sphere cast in front of player
+        Collider[] hits = Physics.OverlapSphere(
+            transform.position + transform.forward * 1.2f + Vector3.up * 0.8f, 1f);
+
+        foreach (var hit in hits)
+        {
+            IInteractable interactable = hit.GetComponent<IInteractable>();
+            if (interactable != null)
+            {
+                interactable.Interact(this);
+                break;
+            }
+        }
+    }
+
+    public void OnPause(InputAction.CallbackContext ctx)
+    {
+        if (!ctx.performed) return;
+        TogglePause();
+    }
+
+    #endregion
+
+    // ═══════════════════════════════════════════════════════════════════════
+    #region Movement & Physics
+    // ═══════════════════════════════════════════════════════════════════════
+
+    private void CheckGround()
+    {
+        wasGrounded = isGrounded;
+        isGrounded  = cc.isGrounded;
 
         if (isGrounded && velocity.y < 0)
+            velocity.y = -2f;   // small negative to keep grounded
+
+        // Land trigger
+        if (!wasGrounded && isGrounded && jumpPhase == JumpPhase.Falling)
         {
-            velocity.y = -2f;
+            jumpPhase = JumpPhase.Landing;
+            anim?.SetTrigger(HashLand);
+            AudioManager.Instance?.PlaySFX(landSound);
+            Invoke(nameof(ClearLandPhase), 0.4f);
+        }
+    }
+
+    private void ClearLandPhase() => jumpPhase = JumpPhase.None;
+
+    private void HandleGravityAndJumpPhases()
+    {
+        // Gravity
+        velocity.y += gravity * Time.deltaTime;
+        cc.Move(new Vector3(0, velocity.y, 0) * Time.deltaTime);
+
+        // Rising -> Falling transition at apex
+        if (jumpPhase == JumpPhase.Rising && velocity.y < 0)
+        {
+            jumpPhase = JumpPhase.Falling;
+            anim?.SetBool(HashJumpFall, true);
+            anim?.SetBool(HashJumpRise, false);
         }
     }
 
     private void HandleMovement()
     {
-        float currentSpeed = walkSpeed;
+        if (isDancing) return;
 
-        if (isCrouching)
-            currentSpeed = crouchSpeed;
-        else if (isRunning && !isAiming)
-            currentSpeed = runSpeed;
+        // Choose speed
+        float speed = isCrouching ? crouchSpeed :
+                      isRunning   ? runSpeed    : walkSpeed;
 
-        Vector3 forward = transform.forward;
-        Vector3 right = transform.right;
+        // World-space direction relative to camera yaw
+        Vector3 camForward = Camera.main != null
+            ? Vector3.ProjectOnPlane(Camera.main.transform.forward, Vector3.up).normalized
+            : transform.forward;
+        Vector3 camRight = Vector3.Cross(Vector3.up, camForward).normalized * -1f;
 
-        Vector3 move = (forward * moveInput.y + right * moveInput.x) * currentSpeed;
-        controller.Move(move * Time.deltaTime);
+        Vector3 move = (camForward * moveInput.y + camRight * moveInput.x).normalized;
 
-        // Update animator
-        float animMoveX = moveInput.x;
-        float animMoveZ = moveInput.y;
-
-        if (isAiming)
+        if (move.sqrMagnitude > 0.01f)
         {
-            // En modo apuntar, movimiento relativo a la c�mara
-            animMoveX = moveInput.x;
-            animMoveZ = moveInput.y;
-        }
-
-        animator.SetFloat(moveXHash, animMoveX, 0.1f, Time.deltaTime);
-        animator.SetFloat(moveZHash, animMoveZ, 0.1f, Time.deltaTime);
-    }
-
-    private void HandleRotation()
-    {
-        if (isAiming)
-        {
-            // En modo apuntar (c�mara de hombro):
-            // El jugador rota en el eje Y con la c�mara
-            float horizontalRotation = rawLookInput.x * mouseSensitivity;
-            transform.Rotate(Vector3.up * horizontalRotation);
-
-            // Actualizar la c�mara POV
-            CameraManager.Instance?.UpdateShoulderCamera(rawLookInput);
-        }
-        else
-        {
-            // En tercera persona normal:
-            // Rotar el jugador con input horizontal
-            float horizontalRotation = lookInput.x * mouseSensitivity;
-            transform.Rotate(Vector3.up * horizontalRotation);
-        }
-    }
-
-    private void ApplyGravity()
-    {
-        velocity.y += gravity * Time.deltaTime;
-        controller.Move(velocity * Time.deltaTime);
-    }
-
-    // INPUT CALLBACKS (llamadas por el nuevo Input System)
-
-    public void OnMove(InputAction.CallbackContext context)
-    {
-        moveInput = context.ReadValue<Vector2>();
-    }
-
-    public void OnLook(InputAction.CallbackContext context)
-    {
-        rawLookInput = context.ReadValue<Vector2>();
-
-        // Aplicar sensibilidad solo para rotaci�n del jugador
-        lookInput = rawLookInput * mouseSensitivity * 0.1f;
-    }
-
-    public void OnJump(InputAction.CallbackContext context)
-    {
-        if (context.performed && isGrounded && !isCrouching && !isDancing)
-        {
-            velocity.y = Mathf.Sqrt(jumpHeight * -2f * gravity);
-            animator.SetTrigger(jumpHash);
-        }
-    }
-
-    public void OnRun(InputAction.CallbackContext context)
-    {
-        if (context.performed)
-            isRunning = true;
-        else if (context.canceled)
-            isRunning = false;
-
-        animator.SetBool(isRunningHash, isRunning);
-    }
-
-    public void OnCrouch(InputAction.CallbackContext context)
-    {
-        if (context.performed && !isDancing)
-        {
-            isCrouching = !isCrouching;
-            animator.SetBool(isCrouchingHash, isCrouching);
-
-            // Ajustar altura del collider
-            if (isCrouching)
+            // Rotate player toward movement direction (except while aiming)
+            if (!isAiming)
             {
-                controller.height = 1f;
-                controller.center = new Vector3(0, 0.5f, 0);
+                Quaternion targetRot = Quaternion.LookRotation(move);
+                transform.rotation   = Quaternion.Slerp(transform.rotation, targetRot, 10f * Time.deltaTime);
             }
-            else
+
+            cc.Move(move * speed * Time.deltaTime);
+        }
+
+        // Animator blend speed (0 = idle, 0.5 = walk, 1 = run)
+        float animSpeed = moveInput.sqrMagnitude < 0.01f ? 0f :
+                          isRunning ? 1f : 0.5f;
+        if (isCrouching && animSpeed > 0) animSpeed = 0.25f;
+
+        anim?.SetFloat(HashSpeed, animSpeed, 0.1f, Time.deltaTime);
+    }
+
+    private void HandleCamera()
+    {
+        if (CameraManager.Instance != null)
+            CameraManager.Instance.HandleRotation(lookInput);
+    }
+
+    private void HandleFootsteps()
+    {
+        if (!isGrounded || moveInput.sqrMagnitude < 0.01f) return;
+
+        footstepTimer -= Time.deltaTime;
+        if (footstepTimer <= 0f)
+        {
+            AudioManager.Instance?.PlaySFX(footstepSound);
+            footstepTimer = isRunning ? FootstepInterval * 0.6f : FootstepInterval;
+        }
+    }
+
+    private void StartJump()
+    {
+        jumpPhase  = JumpPhase.Preparing;
+        anim?.SetTrigger(HashJumpPrep);
+        AudioManager.Instance?.PlaySFX(jumpSound);
+        Invoke(nameof(LaunchJump), 0.15f);  // small pre-jump delay for animation
+    }
+
+    private void LaunchJump()
+    {
+        velocity.y = Mathf.Sqrt(jumpForce * -2f * gravity);
+        jumpPhase  = JumpPhase.Rising;
+        anim?.SetBool(HashJumpRise, true);
+        anim?.SetBool(HashJumpFall, false);
+    }
+
+    #endregion
+
+    // ═══════════════════════════════════════════════════════════════════════
+    #region Combat
+    // ═══════════════════════════════════════════════════════════════════════
+
+    public void Attack()
+    {
+        if (isDead || isDancing) return;
+        anim?.SetTrigger(HashAttack);
+
+        // Damage enemies in melee range
+        Collider[] hits = Physics.OverlapSphere(
+            transform.position + transform.forward * 1f + Vector3.up * 1f, attackRange);
+
+        foreach (var hit in hits)
+        {
+            if (hit.CompareTag("Enemy"))
             {
-                controller.height = 2f;
-                controller.center = new Vector3(0, 1f, 0);
+                IDamageable dmg = hit.GetComponent<IDamageable>();
+                dmg?.TakeDamage(attackDamage);
             }
         }
     }
 
-    public void OnAim(InputAction.CallbackContext context)
+    private void ShootArrow()
     {
-        if (context.performed)
-        {
-            isAiming = true;
-            CameraManager.Instance?.SwitchToShoulder(); // CAMBIADO
-        }
-        else if (context.canceled)
-        {
-            isAiming = false;
-            CameraManager.Instance?.SwitchToThirdPerson();
-        }
+        if (arrowPrefab == null || arrowSpawnPoint == null) return;
 
-        animator.SetBool(isAimingHash, isAiming);
-    }
+        // Direction: camera forward
+        Vector3 dir = Camera.main != null
+            ? Camera.main.transform.forward
+            : transform.forward;
 
-    public void OnShoot(InputAction.CallbackContext context)
-    {
-        if (context.performed && isAiming && !isDancing)
-        {
-            Shoot();
-        }
-    }
-
-    public void OnDance(InputAction.CallbackContext context)
-    {
-        if (context.performed && isGrounded && !isDead)
-        {
-            StartDance();
-        }
-    }
-
-    public void OnInteract(InputAction.CallbackContext context)
-    {
-        if (context.performed)
-        {
-            // Detectar objetos interactuables
-            Collider[] hits = Physics.OverlapSphere(transform.position, 2f);
-            foreach (var hit in hits)
-            {
-                IInteractable interactable = hit.GetComponent<IInteractable>();
-                if (interactable != null)
-                {
-                    interactable.Interact(this);
-                }
-            }
-        }
-    }
-
-    private void Shoot()
-    {
-        animator.SetTrigger(shootHash);
-
-        if (arrowPrefab != null && arrowSpawnPoint != null)
-        {
-            GameObject arrow = Instantiate(arrowPrefab, arrowSpawnPoint.position, arrowSpawnPoint.rotation);
-
-            // Calcular direcci�n de disparo basada en la c�mara
-            Vector3 shootDirection;
-
-            if (CameraManager.Instance != null && Camera.main != null)
-            {
-                // Raycast desde el centro de la pantalla
-                Ray ray = Camera.main.ViewportPointToRay(new Vector3(0.5f, 0.5f, 0));
-                RaycastHit hit;
-
-                if (Physics.Raycast(ray, out hit, 100f))
-                {
-                    // Apuntar al punto de impacto
-                    shootDirection = (hit.point - arrowSpawnPoint.position).normalized;
-                }
-                else
-                {
-                    // Apuntar hacia adelante de la c�mara
-                    shootDirection = ray.direction;
-                }
-            }
-            else
-            {
-                // Fallback: direcci�n forward del spawn point
-                shootDirection = arrowSpawnPoint.forward;
-            }
-
-            Arrow arrowScript = arrow.GetComponent<Arrow>();
-            if (arrowScript != null)
-            {
-                arrowScript.Shoot(shootDirection);
-            }
-        }
-
-        // Efecto de sonido
-        AudioManager.Instance?.PlaySFX("BowShoot");
-    }
-
-    private void StartDance()
-    {
-        isDancing = true;
-        animator.SetBool(isDancingHash, true);
-
-        // Mover c�mara al frente
-        CameraManager.Instance?.SwitchToDanceCamera();
-
-        // Detener despu�s de la animaci�n
-        Invoke(nameof(StopDance), 5f); // Ajustar seg�n duraci�n de animaci�n
-    }
-
-    private void StopDance()
-    {
-        isDancing = false;
-        animator.SetBool(isDancingHash, false);
-        CameraManager.Instance?.SwitchToThirdPerson();
+        GameObject arrowGO = Instantiate(arrowPrefab, arrowSpawnPoint.position, Quaternion.identity);
+        Arrow arrow = arrowGO.GetComponent<Arrow>();
+        arrow?.Shoot(dir);
     }
 
     public void Die()
     {
         if (isDead) return;
-
         isDead = true;
-        animator.SetTrigger(dieHash);
+        anim?.SetTrigger(HashDeath);
+        AudioManager.Instance?.PlaySFX(deathSound);
+        cc.enabled = false;
 
-        // Desactivar controles
-        playerInput.enabled = false;
+        Invoke(nameof(ShowGameOver), 2f);
+    }
 
-        // Mostrar Game Over
+    private void ShowGameOver()
+    {
         UIManager.Instance?.ShowGameOver();
     }
 
-    public void TakeDamage(float damage)
+    #endregion
+
+    // ═══════════════════════════════════════════════════════════════════════
+    #region Pause / ESC menu
+    // ═══════════════════════════════════════════════════════════════════════
+
+    public void TogglePause()
     {
-        // Implementar sistema de vida aqu�
-        Die();
+        isPaused = !isPaused;
+
+        if (isPaused)
+        {
+            // Switch to UI map so ESC closes the menu and player actions stop
+            inputActions.Player.Disable();
+            inputActions.UI.Enable();
+
+            Time.timeScale       = 0f;
+            Cursor.lockState     = CursorLockMode.None;
+            Cursor.visible       = true;
+            UIManager.Instance?.ShowPauseMenu(true);
+        }
+        else
+        {
+            inputActions.UI.Disable();
+            inputActions.Player.Enable();
+
+            Time.timeScale       = 1f;
+            Cursor.lockState     = CursorLockMode.Locked;
+            Cursor.visible       = false;
+            UIManager.Instance?.ShowPauseMenu(false);
+        }
     }
+
+    /// <summary>Called by the UI map's Pause action (ESC while paused).</summary>
+    public void OnUIPause(InputAction.CallbackContext ctx)
+    {
+        if (ctx.performed) TogglePause();
+    }
+
+    #endregion
+
+    // ═══════════════════════════════════════════════════════════════════════
+    #region Public helpers
+    // ═══════════════════════════════════════════════════════════════════════
+
+    public bool IsDead    => isDead;
+    public bool IsPaused  => isPaused;
+    public bool IsAiming  => isAiming;
+
+    #endregion
+
+#if UNITY_EDITOR
+    private void OnDrawGizmosSelected()
+    {
+        Gizmos.color = Color.red;
+        Gizmos.DrawWireSphere(transform.position + transform.forward * 1f + Vector3.up, attackRange);
+    }
+#endif
 }

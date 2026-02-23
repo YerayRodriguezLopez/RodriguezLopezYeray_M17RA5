@@ -1,20 +1,21 @@
-using UnityEngine;
+using System.Collections.Generic;
 using System.IO;
+using UnityEngine;
 
 [System.Serializable]
 public class SaveData
 {
-    public Vector3 playerPosition;
+    public Vector3    playerPosition;
     public Quaternion playerRotation;
-    public string[] inventoryItems;
-    public bool[] collectablesCollected;
+    public List<string> inventoryItemNames = new List<string>();
+    public List<string> collectedItemIds   = new List<string>();  // scene collectibles
 }
 
 public class SaveSystem : MonoBehaviour
 {
     public static SaveSystem Instance { get; private set; }
 
-    private string saveFilePath;
+    private static string SavePath => Path.Combine(Application.persistentDataPath, "savegame.json");
 
     private void Awake()
     {
@@ -27,15 +28,17 @@ public class SaveSystem : MonoBehaviour
         {
             Destroy(gameObject);
         }
-
-        saveFilePath = Application.persistentDataPath + "/savegame.json";
     }
+
+    // ════════════════════════════════════════════════════════════════════════
+    #region Save
+    // ════════════════════════════════════════════════════════════════════════
 
     public void SaveGame()
     {
         SaveData data = new SaveData();
 
-        // Guardar posici�n del jugador
+        // Player transform
         PlayerController player = FindObjectOfType<PlayerController>();
         if (player != null)
         {
@@ -43,62 +46,73 @@ public class SaveSystem : MonoBehaviour
             data.playerRotation = player.transform.rotation;
         }
 
-        // Guardar inventario
-        var inventory = InventoryManager.Instance.GetInventory();
-        data.inventoryItems = new string[inventory.Count];
-        for (int i = 0; i < inventory.Count; i++)
+        // Inventory
+        if (InventoryManager.Instance != null)
+            data.inventoryItemNames = InventoryManager.Instance.GetItemNames();
+
+        // Collected scene items (items whose GameObject has been disabled/destroyed)
+        CollectableItem[] collectables = FindObjectsOfType<CollectableItem>(true);
+        foreach (CollectableItem c in collectables)
         {
-            data.inventoryItems[i] = inventory[i].itemName;
+            if (c.IsCollected)
+                data.collectedItemIds.Add(c.ItemId);
         }
 
-        // Guardar coleccionables
-        CollectableItem[] collectables = FindObjectsOfType<CollectableItem>();
-        data.collectablesCollected = new bool[collectables.Length];
-        for (int i = 0; i < collectables.Length; i++)
-        {
-            data.collectablesCollected[i] = false; // Marcar los que faltan
-        }
+        string json = JsonUtility.ToJson(data, prettyPrint: true);
+        File.WriteAllText(SavePath, json);
 
-        // Convertir a JSON y guardar
-        string json = JsonUtility.ToJson(data, true);
-        File.WriteAllText(saveFilePath, json);
-
-        Debug.Log("Partida guardada en: " + saveFilePath);
-        UIManager.Instance?.ShowMessage("Partida guardada");
+        UIManager.Instance?.ShowMessage("Partida guardada!");
+        Debug.Log($"[SaveSystem] Saved to {SavePath}");
     }
+
+    #endregion
+
+    // ════════════════════════════════════════════════════════════════════════
+    #region Load
+    // ════════════════════════════════════════════════════════════════════════
+
+    public bool HasSave() => File.Exists(SavePath);
 
     public void LoadGame()
     {
-        if (!File.Exists(saveFilePath))
+        if (!HasSave())
         {
-            Debug.LogWarning("No hay partida guardada");
+            Debug.LogWarning("[SaveSystem] No save file found.");
             return;
         }
 
-        string json = File.ReadAllText(saveFilePath);
+        string   json = File.ReadAllText(SavePath);
         SaveData data = JsonUtility.FromJson<SaveData>(json);
 
-        // Cargar posici�n del jugador
+        // Player transform
         PlayerController player = FindObjectOfType<PlayerController>();
         if (player != null)
         {
             CharacterController cc = player.GetComponent<CharacterController>();
             cc.enabled = false;
-            player.transform.position = data.playerPosition;
-            player.transform.rotation = data.playerRotation;
+            player.transform.SetPositionAndRotation(data.playerPosition, data.playerRotation);
             cc.enabled = true;
         }
 
-        // Cargar inventario
-        InventoryManager.Instance.ClearInventory();
-        // Aqu� deber�as cargar los items desde sus nombres
+        // Inventory
+        InventoryManager.Instance?.LoadFromNames(data.inventoryItemNames);
 
-        Debug.Log("Partida cargada");
-        UIManager.Instance?.ShowMessage("Partida cargada");
+        // Restore collected state of scene collectibles
+        CollectableItem[] collectables = FindObjectsOfType<CollectableItem>(true);
+        foreach (CollectableItem c in collectables)
+        {
+            if (data.collectedItemIds.Contains(c.ItemId))
+                c.SetCollectedState(true);
+        }
+
+        Debug.Log("[SaveSystem] Game loaded.");
     }
 
-    public bool HasSaveFile()
+    public void DeleteSave()
     {
-        return File.Exists(saveFilePath);
+        if (File.Exists(SavePath))
+            File.Delete(SavePath);
     }
+
+    #endregion
 }

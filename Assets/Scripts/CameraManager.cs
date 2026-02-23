@@ -1,137 +1,167 @@
 using UnityEngine;
-using Cinemachine;
 
+/// <summary>
+/// Manages third-person, first-person (aim) and dance camera modes.
+/// Attach to a dedicated CameraManager GameObject.
+/// </summary>
 public class CameraManager : MonoBehaviour
 {
     public static CameraManager Instance { get; private set; }
 
-    [Header("Virtual Cameras")]
-    [SerializeField] private CinemachineVirtualCamera thirdPersonCamera;
-    [SerializeField] private CinemachineVirtualCamera shoulderCamera; // CAMBIADO de firstPerson
-    [SerializeField] private CinemachineVirtualCamera danceCamera;
+    // ─── References ─────────────────────────────────────────────────────────
+    [Header("Target")]
+    [SerializeField] private Transform playerRoot;          // player transform
+    [SerializeField] private Transform cameraTarget;        // empty child at shoulder height
 
-    [Header("Camera Targets")]
-    [SerializeField] private Transform thirdPersonTarget;
-    [SerializeField] private Transform shoulderTarget;
-    [SerializeField] private Transform danceTarget;
+    [Header("Third-person")]
+    [SerializeField] private float tpDistance    = 4f;
+    [SerializeField] private float tpHeight      = 1.5f;
+    [SerializeField] private float tpMinPitch    = -20f;
+    [SerializeField] private float tpMaxPitch    =  60f;
 
-    [Header("Input Settings")]
-    [SerializeField] private bool invertYAxis = false;
-    [SerializeField] private float cameraSensitivity = 1f;
+    [Header("First-person / Aim")]
+    [SerializeField] private float fpDistance    = 0.3f;   // slight offset forward of head
+    [SerializeField] private float fpHeight      = 1.7f;   // eye height
 
-    private CinemachineVirtualCamera activeCamera;
-    private CinemachinePOV shoulderPOV;
+    [Header("Dance camera")]
+    [SerializeField] private float danceDistance = 3.5f;
+    [SerializeField] private float danceHeight   = 1.2f;
 
+    [Header("Sensitivity")]
+    [SerializeField] private float sensitivity   = 0.12f;
+
+    [Header("Collision")]
+    [SerializeField] private LayerMask collisionMask;
+    [SerializeField] private float     collisionRadius = 0.2f;
+
+    [Header("Smooth")]
+    [SerializeField] private float positionSmooth = 10f;
+    [SerializeField] private float rotationSmooth = 10f;
+
+    // ─── State ───────────────────────────────────────────────────────────────
+    private Camera  cam;
+    private float   yaw;
+    private float   pitch;
+    private bool    isAiming;
+    private bool    isDancing;
+
+    // ════════════════════════════════════════════════════════════════════════
     private void Awake()
     {
-        if (Instance == null)
+        if (Instance == null) Instance = this;
+        else { Destroy(gameObject); return; }
+
+        cam = GetComponentInChildren<Camera>();
+
+        if (playerRoot == null)
         {
-            Instance = this;
+            GameObject player = GameObject.FindGameObjectWithTag("Player");
+            if (player != null) playerRoot = player.transform;
+        }
+
+        // Initialise yaw from player facing
+        if (playerRoot != null)
+            yaw = playerRoot.eulerAngles.y;
+
+        Cursor.lockState = CursorLockMode.Locked;
+        Cursor.visible   = false;
+    }
+
+    private void LateUpdate()
+    {
+        if (playerRoot == null || cam == null) return;
+
+        UpdateCameraPosition();
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    #region Public API
+    // ════════════════════════════════════════════════════════════════════════
+
+    /// <summary>Called every frame by PlayerController with mouse/stick delta.</summary>
+    public void HandleRotation(Vector2 lookDelta)
+    {
+        if (isDancing) return;      // camera locked frontally during dance
+
+        yaw   += lookDelta.x * sensitivity;
+        pitch -= lookDelta.y * sensitivity;
+        pitch  = Mathf.Clamp(pitch, tpMinPitch, tpMaxPitch);
+    }
+
+    public void SetAiming(bool aiming)
+    {
+        isAiming = aiming;
+    }
+
+    public void SetDancing(bool dancing)
+    {
+        isDancing = dancing;
+
+        if (dancing)
+        {
+            // Snap camera in front of player
+            yaw   = playerRoot.eulerAngles.y + 180f;
+            pitch = 10f;
+        }
+    }
+
+    public bool IsShoulderCameraActive() => isAiming;
+
+    #endregion
+
+    // ════════════════════════════════════════════════════════════════════════
+    #region Position update
+    // ════════════════════════════════════════════════════════════════════════
+
+    private void UpdateCameraPosition()
+    {
+        Vector3 targetPos;
+        Quaternion targetRot = Quaternion.Euler(pitch, yaw, 0f);
+
+        if (isDancing)
+        {
+            // Front-facing fixed view
+            Vector3 danceOffset = Quaternion.Euler(5f, yaw, 0f) * new Vector3(0, danceHeight, danceDistance);
+            targetPos = playerRoot.position + danceOffset;
+        }
+        else if (isAiming)
+        {
+            // First-person / shoulder
+            Vector3 eyePos = playerRoot.position + Vector3.up * fpHeight;
+            Vector3 fpOffset = targetRot * new Vector3(0.3f, 0, fpDistance);
+            targetPos = eyePos + fpOffset;
         }
         else
         {
-            Destroy(gameObject);
+            // Third-person
+            Vector3 offset = targetRot * new Vector3(0, 0, -tpDistance);
+            targetPos = playerRoot.position + Vector3.up * tpHeight + offset;
         }
 
-        // Obtener el componente POV de la c�mara de hombro
-        if (shoulderCamera != null)
+        // ─── Collision check ────────────────────────────────────────────────
+        if (!isAiming)
         {
-            shoulderPOV = shoulderCamera.GetCinemachineComponent<CinemachinePOV>();
-        }
-    }
+            Vector3 origin    = playerRoot.position + Vector3.up * tpHeight;
+            Vector3 direction = (targetPos - origin).normalized;
+            float   maxDist   = Vector3.Distance(origin, targetPos);
 
-    private void Start()
-    {
-        SwitchToThirdPerson();
-    }
-
-    public void SwitchToThirdPerson()
-    {
-        SetCameraPriorities(10, 0, 0);
-        activeCamera = thirdPersonCamera;
-
-        Debug.Log("C�mara: Tercera Persona");
-    }
-
-    public void SwitchToShoulder()
-    {
-        SetCameraPriorities(0, 10, 0);
-        activeCamera = shoulderCamera;
-
-        // Reset POV al cambiar
-        if (shoulderPOV != null)
-        {
-            shoulderPOV.m_VerticalAxis.Value = 0;
+            if (Physics.SphereCast(origin, collisionRadius, direction, out RaycastHit hit,
+                                   maxDist, collisionMask, QueryTriggerInteraction.Ignore))
+            {
+                targetPos = origin + direction * (hit.distance - collisionRadius);
+            }
         }
 
-        Debug.Log("C�mara: Hombro (Apuntando)");
+        // ─── Smooth move ────────────────────────────────────────────────────
+        cam.transform.position = Vector3.Lerp(
+            cam.transform.position, targetPos, positionSmooth * Time.deltaTime);
+
+        cam.transform.rotation = Quaternion.Slerp(
+            cam.transform.rotation, targetRot, rotationSmooth * Time.deltaTime);
+
+        // Rotate player yaw to match camera when moving (handled in PlayerController)
+        // but we expose yaw so the player can read it
     }
 
-    public void SwitchToDanceCamera()
-    {
-        SetCameraPriorities(0, 0, 10);
-        activeCamera = danceCamera;
-
-        Debug.Log("C�mara: Baile");
-    }
-
-    private void SetCameraPriorities(int third, int shoulder, int dance)
-    {
-        if (thirdPersonCamera != null)
-            thirdPersonCamera.Priority = third;
-        if (shoulderCamera != null)
-            shoulderCamera.Priority = shoulder;
-        if (danceCamera != null)
-            danceCamera.Priority = dance;
-    }
-
-    // Llamado por PlayerController para controlar la c�mara POV
-    public void UpdateShoulderCamera(Vector2 lookInput)
-    {
-        if (shoulderPOV == null || activeCamera != shoulderCamera) return;
-
-        // Aplicar input del rat�n/stick
-        float verticalInput = invertYAxis ? lookInput.y : -lookInput.y;
-
-        shoulderPOV.m_VerticalAxis.Value += verticalInput * cameraSensitivity;
-        shoulderPOV.m_HorizontalAxis.Value += lookInput.x * cameraSensitivity;
-    }
-
-    public Transform GetActiveTarget()
-    {
-        if (activeCamera == thirdPersonCamera)
-            return thirdPersonTarget;
-        else if (activeCamera == shoulderCamera)
-            return shoulderTarget;
-        else if (activeCamera == danceCamera)
-            return danceTarget;
-
-        return thirdPersonTarget;
-    }
-
-    public bool IsShoulderCameraActive()
-    {
-        return activeCamera == shoulderCamera;
-    }
-
-    public Vector3 GetCameraForward()
-    {
-        if (Camera.main != null)
-        {
-            Vector3 forward = Camera.main.transform.forward;
-            forward.y = 0; // Mantener en plano horizontal
-            return forward.normalized;
-        }
-        return Vector3.forward;
-    }
-
-    public void SetCameraSensitivity(float sensitivity)
-    {
-        cameraSensitivity = Mathf.Clamp(sensitivity, 0.1f, 5f);
-    }
-
-    public void SetInvertY(bool invert)
-    {
-        invertYAxis = invert;
-    }
+    #endregion
 }

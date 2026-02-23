@@ -5,21 +5,25 @@ public class GameManager : MonoBehaviour
 {
     public static GameManager Instance { get; private set; }
 
-    [Header("Game State")]
-    [SerializeField] private bool gameStarted = false;
-    [SerializeField] private bool gameOver = false;
-    [SerializeField] private bool gameWon = false;
+    // ─── Scene names ────────────────────────────────────────────────────────
+    [Header("Scene Names")]
+    [SerializeField] private string mainMenuScene   = "MainMenu";
+    [SerializeField] private string exteriorScene   = "Exterior";
+    [SerializeField] private string interiorScene   = "Interior";
 
-    [Header("Win Condition")]
-    [SerializeField] private int requiredCollectables = 1;
-    private int collectedItems = 0;
+    // ─── State ──────────────────────────────────────────────────────────────
+    private bool gameStarted;
+    private bool doorOpened;
 
-    [Header("References")]
-    [SerializeField] private GameObject playerPrefab;
-    [SerializeField] private Transform playerSpawnPoint;
+    public bool DoorOpened  => doorOpened;
+    public bool GameStarted => gameStarted;
 
-    private PlayerController player;
+    // ─── Events ─────────────────────────────────────────────────────────────
+    public static event System.Action OnDoorOpened;
+    public static event System.Action OnGameOver;
+    public static event System.Action OnGameWin;
 
+    // ════════════════════════════════════════════════════════════════════════
     private void Awake()
     {
         if (Instance == null)
@@ -35,94 +39,81 @@ public class GameManager : MonoBehaviour
 
     private void Start()
     {
-        InitializeGame();
+        // Lock and hide cursor during gameplay
+        Cursor.lockState = CursorLockMode.Locked;
+        Cursor.visible   = false;
     }
 
-    private void InitializeGame()
+    // ════════════════════════════════════════════════════════════════════════
+    #region Public API
+    // ════════════════════════════════════════════════════════════════════════
+
+    public void StartGame()
     {
-        // Encontrar o crear el jugador
-        player = FindObjectOfType<PlayerController>();
-
-        if (player == null && playerPrefab != null && playerSpawnPoint != null)
-        {
-            GameObject playerGO = Instantiate(playerPrefab, playerSpawnPoint.position, playerSpawnPoint.rotation);
-            player = playerGO.GetComponent<PlayerController>();
-        }
-
         gameStarted = true;
-        gameOver = false;
-        gameWon = false;
-        collectedItems = 0;
+        Time.timeScale = 1f;
+        SceneManager.LoadScene(exteriorScene);
     }
 
-    public void CollectItem()
+    public void LoadMainMenu()
     {
-        collectedItems++;
-
-        Debug.Log($"Items recogidos: {collectedItems}/{requiredCollectables}");
-
-        if (collectedItems >= requiredCollectables)
-        {
-            // Habilitar la puerta o activar el objetivo
-            EnableVictoryCondition();
-        }
+        Time.timeScale   = 1f;
+        Cursor.lockState = CursorLockMode.None;
+        Cursor.visible   = true;
+        SceneManager.LoadScene(mainMenuScene);
     }
 
-    private void EnableVictoryCondition()
+    public void RestartGame()
     {
-        Debug.Log("�Todos los objetos recogidos! Busca la puerta.");
-        UIManager.Instance?.ShowMessage("�Objetos completados! Encuentra la puerta.", 5f);
+        doorOpened = false;
+        Time.timeScale = 1f;
 
-        // Activar la puerta
-        Door victoryDoor = FindObjectOfType<Door>();
-        if (victoryDoor != null)
-        {
-            // La puerta ya est� activa, solo notificar
-        }
+        // Reload current active scene
+        SceneManager.LoadScene(SceneManager.GetActiveScene().buildIndex);
     }
 
-    public void TriggerVictory()
+    public void QuitGame()
     {
-        if (gameWon || gameOver) return;
-
-        gameWon = true;
-        Debug.Log("�Victoria!");
-
-        UIManager.Instance?.ShowMessage("�Victoria! Completaste el juego.", 5f);
-
-        // Aqu� puedes mostrar un men� de victoria
-        Invoke(nameof(ShowVictoryScreen), 3f);
+#if UNITY_EDITOR
+        UnityEditor.EditorApplication.isPlaying = false;
+#else
+        Application.Quit();
+#endif
     }
 
-    private void ShowVictoryScreen()
+    // ─── Door / win flow ────────────────────────────────────────────────────
+
+    public void NotifyDoorOpened()
     {
-        // Implementar pantalla de victoria
-        UIManager.Instance?.ShowGameOver(); // Temporal, usar un panel de victoria
+        if (doorOpened) return;
+        doorOpened = true;
+        OnDoorOpened?.Invoke();
     }
 
-    public void GameOver()
+    public void TriggerWin()
     {
-        if (gameOver) return;
+        OnGameWin?.Invoke();
+        UIManager.Instance?.ShowWinScreen();
+    }
 
-        gameOver = true;
-        Debug.Log("Game Over");
-
+    public void TriggerGameOver()
+    {
+        OnGameOver?.Invoke();
         UIManager.Instance?.ShowGameOver();
     }
 
-    public void RestartLevel()
+    // ─── Scene transitions ──────────────────────────────────────────────────
+
+    public void GoToInterior()
     {
-        SceneManager.LoadScene(SceneManager.GetActiveScene().name);
-        InitializeGame();
+        SaveSystem.Instance?.SaveGame();
+        SceneManager.LoadScene(interiorScene);
     }
 
-    public PlayerController GetPlayer()
+    public void GoToExterior()
     {
-        return player;
+        SceneManager.LoadScene(exteriorScene);
     }
 
-    public bool IsGameActive()
-    {
-        return gameStarted && !gameOver && !gameWon;
-    }
+    #endregion
 }
