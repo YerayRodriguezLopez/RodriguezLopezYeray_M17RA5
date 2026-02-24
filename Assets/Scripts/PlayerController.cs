@@ -26,7 +26,7 @@ public class PlayerController : MonoBehaviour, InputSystem_Actions.IPlayerAction
     private Vector2 _moveInput;
     private Vector2 _lookInput;
     private bool _isAiming;
-    private bool _hasWeapon;
+    private bool _hasWeapon = true;
 
     private Camera _cam;
     public bool HasWeapon => _hasWeapon;
@@ -47,25 +47,25 @@ public class PlayerController : MonoBehaviour, InputSystem_Actions.IPlayerAction
 
         _cam = Camera.main;
 
-        if (_saveLoadBehaviour)
-        {
-            _hasWeapon = _saveLoadBehaviour.LoadPlayerData();
-        }
+        //if (_saveLoadBehaviour)
+        //{
+        //    _hasWeapon = _saveLoadBehaviour.LoadPlayerData();
+        //}
     }
 
     private void Start()
     {
         // Make sure weapon is hidden at start
-        if ((weaponGear && weaponHand) && !_hasWeapon)
-        {
-            weaponGear.SetActive(_hasWeapon);
-            weaponHand.SetActive(_hasWeapon);
-        }
-        else
-        {
+        //if ((weaponGear && weaponHand) && !_hasWeapon)
+        //{
+        //    weaponGear.SetActive(_hasWeapon);
+        //    weaponHand.SetActive(_hasWeapon);
+        //}
+        //else
+        //{
             weaponGear.SetActive(_hasWeapon);
             weaponHand.SetActive(!_hasWeapon);
-        }
+        //}
     }
 
     private void OnEnable() => _input.Player.Enable();
@@ -143,6 +143,7 @@ public class PlayerController : MonoBehaviour, InputSystem_Actions.IPlayerAction
     public void OnLook(InputAction.CallbackContext context)
     {
         _lookInput = context.ReadValue<Vector2>();
+        //Debug.Log($"Look input: {_lookInput}");
     }
 
     public void OnJump(InputAction.CallbackContext context)
@@ -162,12 +163,13 @@ public class PlayerController : MonoBehaviour, InputSystem_Actions.IPlayerAction
 
     public void OnAim(InputAction.CallbackContext context)
     {
+        Debug.Log($"HasWeapon = {_hasWeapon}");
         if (_hasWeapon)
         {
             _isAiming = context.ReadValueAsButton();
             ToggleCameraAim();
             //_camera?.SetAiming(_isAiming);
-
+            Debug.Log($"Aiming: {_isAiming}");
             weaponHand.SetActive(_isAiming);
             weaponGear.SetActive(!_isAiming);
         }
