@@ -1,33 +1,26 @@
-using UnityEngine;
 using System.Collections.Generic;
+using UnityEngine;
 
-[System.Serializable]
-public class Sound
+public enum AudioClips
 {
-    public string name;
-    public AudioClip clip;
-    [Range(0f, 1f)]
-    public float volume = 1f;
-    [Range(0.1f, 3f)]
-    public float pitch = 1f;
-    public bool loop = false;
-
-    [HideInInspector]
-    public AudioSource source;
+    StepWalk,
+    StepRun,
+    Jump,
+    Land,
+    ShootBow,
+    WeaponDraw,
+    WeaponUndraw
 }
 
 public class AudioManager : MonoBehaviour
 {
-    public static AudioManager Instance { get; private set; }
+    public static AudioManager Instance;
 
-    [Header("Music")]
-    [SerializeField] private AudioSource musicSource;
-    [SerializeField] private AudioClip backgroundMusic;
+    [SerializeField] private List<AudioClip> _clips = new List<AudioClip>();
 
-    [Header("Sound Effects")]
-    [SerializeField] private List<Sound> soundEffects = new List<Sound>();
+    private Dictionary<AudioClips, AudioClip> clipList = new Dictionary<AudioClips, AudioClip>();
 
-    private Dictionary<string, Sound> soundDictionary = new Dictionary<string, Sound>();
+    [SerializeField] private AudioSource sfxAudioSourcePrefab;
 
     private void Awake()
     {
@@ -35,82 +28,80 @@ public class AudioManager : MonoBehaviour
         {
             Instance = this;
             DontDestroyOnLoad(gameObject);
+            InitializeClipDictionary();
         }
         else
         {
             Destroy(gameObject);
-            return;
-        }
-
-        // Crear sources para cada sonido
-        foreach (Sound sound in soundEffects)
-        {
-            sound.source = gameObject.AddComponent<AudioSource>();
-            sound.source.clip = sound.clip;
-            sound.source.volume = sound.volume;
-            sound.source.pitch = sound.pitch;
-            sound.source.loop = sound.loop;
-
-            soundDictionary[sound.name] = sound;
         }
     }
 
-    private void Start()
+    private void InitializeClipDictionary()
     {
-        PlayMusic();
-    }
-
-    public void PlayMusic()
-    {
-        if (musicSource != null && backgroundMusic != null)
+        clipList.Clear();
+        if (_clips.Count < System.Enum.GetValues(typeof(AudioClips)).Length)
         {
-            musicSource.clip = backgroundMusic;
-            musicSource.loop = true;
-            musicSource.Play();
-        }
-    }
-
-    public void PlaySFX(string name)
-    {
-        if (soundDictionary.TryGetValue(name, out Sound sound))
-        {
-            sound.source.Play();
+            Debug.LogError("Not enough audio clips assigned in AudioManager!");
         }
         else
         {
-            Debug.LogWarning($"Sonido '{name}' no encontrado");
+            int i = 0;
+            foreach (AudioClips clipName in System.Enum.GetValues(typeof(AudioClips)))
+            {
+                clipList[clipName] = _clips[i];
+                i++;
+            }
         }
     }
 
-    public void PlaySFX(AudioClip clip)
+    public AudioClip GetClip(AudioClips clipName)
     {
-        if (clip != null)
-        {
-            AudioSource.PlayClipAtPoint(clip, Camera.main.transform.position);
-        }
+        if (clipList.ContainsKey(clipName))
+            return clipList[clipName];
+        
+        Debug.LogError("Audio clip not found in AudioManager: " + clipName);
+        return _clips.Count > 0 ? _clips[0] : null;
     }
 
-    public void StopMusic()
+    // Play non-spatialized event SFX globally (e.g., UI clicks)
+    public void Play(AudioClips clipName)
     {
-        if (musicSource != null)
-        {
-            musicSource.Stop();
-        }
+        AudioClip clip = GetClip(clipName);
+        if (clip)
+            AudioSource.PlayClipAtPoint(clip, Camera.main.transform.position, 1f);
     }
 
-    public void SetMusicVolume(float volume)
+    // Override to play spatialized event SFX at a position in world
+    public void Play(AudioClips clipName, Vector3 position)
     {
-        if (musicSource != null)
+        AudioClip clip = GetClip(clipName);
+        
+        if (clip)
         {
-            musicSource.volume = Mathf.Clamp01(volume);
+            AudioSource newSource = Instantiate(sfxAudioSourcePrefab, position, Quaternion.identity);
+            newSource.clip = clip;
+            newSource.spatialBlend = 1f;
+            newSource.minDistance = 5f; // max volume radius
+            newSource.maxDistance = 20f; // distance where volume fades to 0
+
+            newSource.Play();
+            Destroy(newSource.gameObject, clip.length);
         }
     }
-
-    public void SetSFXVolume(float volume)
+    
+    public void Play(AudioClips clipName, Vector3 position, float minDistance, float maxDistance)
     {
-        foreach (var sound in soundEffects)
+        AudioClip clip = GetClip(clipName);
+        if (clip)
         {
-            sound.source.volume = sound.volume * Mathf.Clamp01(volume);
+            AudioSource newSource = Instantiate(sfxAudioSourcePrefab, position, Quaternion.identity);
+            newSource.clip = clip;
+            newSource.spatialBlend = 1f;
+            newSource.minDistance = minDistance; // max volume radius
+            newSource.maxDistance = maxDistance; // distance where volume fades to 0
+
+            newSource.Play();
+            Destroy(newSource.gameObject, clip.length);
         }
     }
 }
