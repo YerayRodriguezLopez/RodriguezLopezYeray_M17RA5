@@ -2077,11 +2077,11 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::SpineAimingBehaviour
   cameraController: {fileID: 965607613}
-  spineBone: {fileID: 1623355057}
+  spineBone: {fileID: 1624969678}
   rotationSpeed: 10
   maxAngle: 35
   minAngle: -30
-  rotationAxis: 2
+  rotationAxis: 1
   invertRotation: 0
 --- !u!114 &610283539
 MonoBehaviour:
@@ -4413,11 +4413,6 @@ Transform:
   - {fileID: 578402673}
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!4 &1623355057 stripped
-Transform:
-  m_CorrespondingSourceObject: {fileID: -8021001004253913084, guid: b323018e0474dcc45a3338c590f17bea, type: 3}
-  m_PrefabInstance: {fileID: 760445715}
-  m_PrefabAsset: {fileID: 0}
 --- !u!4 &1624969678 stripped
 Transform:
   m_CorrespondingSourceObject: {fileID: 366175167995203695, guid: b323018e0474dcc45a3338c590f17bea, type: 3}
