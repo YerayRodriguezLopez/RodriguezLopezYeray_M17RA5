@@ -7,7 +7,7 @@ public class CameraTriggerBehaviour : MonoBehaviour
 
     private void OnTriggerEnter(Collider other)
     {
-        if (other.gameObject.layer == 6)
+        if (other.gameObject.layer == 3)
         {
             cameraTransform.gameObject.SetActive(true);
 

@@ -3,6 +3,8 @@ using Unity.Cinemachine;
 
 public class CameraController : MonoBehaviour
 {
+    const float VerticalMax = 3f;
+    const float VerticalMin = -1f;
     [Header("Camera References")]
     [SerializeField] private CinemachineCamera normalCam;
     [SerializeField] private CinemachineCamera aimCam;
@@ -20,7 +22,9 @@ public class CameraController : MonoBehaviour
     private bool _isAiming;
     private float _currentMouseX;
     private float _targetMouseX;
-    
+    private CinemachineThirdPersonFollow _normalCamFollow;
+    private float _verticalCameraMovement;
+
     public float VerticalAngle => _verticalRotation;
     public bool IsAiming => _isAiming;
     public float MouseXInput => _currentMouseX;
@@ -28,6 +32,8 @@ public class CameraController : MonoBehaviour
     private void Start()
     {
         GameObject player = GameObject.FindGameObjectWithTag("Player");
+        _normalCamFollow = normalCam.GetComponent<CinemachineThirdPersonFollow>();
+
         if (player)
         {
             _playerTransform = player.transform;
@@ -37,7 +43,7 @@ public class CameraController : MonoBehaviour
         Cursor.lockState = CursorLockMode.Locked;
         Cursor.visible = false;
     }
-    
+
     public void Rotate(Vector2 input)
     {
         if (_playerTransform)
@@ -50,9 +56,15 @@ public class CameraController : MonoBehaviour
             _horizontalRotation += input.x * sens;
             _verticalRotation -= input.y * sens;
             _verticalRotation = Mathf.Clamp(_verticalRotation, -maxVerticalAngle, maxVerticalAngle);
+            _verticalCameraMovement = Mathf.Lerp(_verticalCameraMovement, _verticalRotation * 0.05f, Time.deltaTime * turnSmoothingFactor);
+            if (_verticalCameraMovement > VerticalMax) _verticalCameraMovement = VerticalMax;
+            if (_verticalCameraMovement < VerticalMin) _verticalCameraMovement = VerticalMin;
+            if (_normalCamFollow)
+            {
+                _normalCamFollow.ShoulderOffset.y = _verticalCameraMovement;
+            }
         }
     }
-    
     private void Update()
     {
         _currentMouseX = Mathf.Lerp(_currentMouseX, _targetMouseX, Time.deltaTime * turnDecaySpeed);
