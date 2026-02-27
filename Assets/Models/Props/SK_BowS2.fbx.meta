@@ -15,7 +15,7 @@ ModelImporter:
       type: UnityEngine:Material
       assembly: UnityEngine.CoreModule
       name: MI_Bow
-    second: {fileID: 2100000, guid: 0e146dc79a34d454ebd77f8e0539e55b, type: 2}
+    second: {fileID: 2100000, guid: 6761d61c9e552e74bae5ef0b9044e8a7, type: 2}
   materials:
     materialImportMode: 1
     materialName: 0
